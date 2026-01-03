@@ -7,23 +7,15 @@
 #  | $$  | $$   | $$     >$$  $$ | $$  | $$| $$  \__/ /$$$$$$$| $$      | $$| $$$$$$$$  #
 #  | $$  | $$   | $$    /$$/\  $$| $$  | $$| $$      /$$__  $$| $$      | $$| $$_____/  #
 #  |  $$$$$$/   | $$   | $$  \ $$|  $$$$$$/| $$     |  $$$$$$$|  $$$$$$$| $$|  $$$$$$$  #
-#   \______/    |__/   |__/  |__/ \______/ |__/      \_______/ \_______/|__/ \_______/  #
+#   \______/    |__/   |__/  |__/ \______/ |__/      \_______/ \_______/|__/ \_______/ #
 #                                                                                       #
 #########################################################################################
 #                     UTXOracle - Litecoin Edition (RPC Only)
 #
-# This is a Litecoin Core (litecoind) adaptation of the UTXOracle-style algorithm.
-# - Connects to your OWN Litecoin node via JSON-RPC
-# - Pulls raw blocks with getblock <hash> 0 (hex) and parses tx outputs locally
-# - Uses a fixed USD/LTC anchor you provided: LTC = $82.39
-#
-# Save as: UTXOracle_Litecoin.py
-# Run:     python3 UTXOracle_Litecoin.py
-# Options: python3 UTXOracle_Litecoin.py -h
-#
-# NOTE: Litecoin uses 1e8 base units (like BTC), so amount parsing is unchanged.
-# NOTE: If you are using a non-standard fork / exotic serialization, prefer switching
-#       Step 6 to use getblock verbosity=2 and read vout values from JSON.
+# >>> COINBASE ANCHOR HEADER <<<
+# Replace your script FROM THE TOP down to the end of Step 3 with this file.
+# Keep everything AFTER Step 3 exactly as-is.
+#########################################################################################
 
 ###############################################################################
 # Step 1 - Configuration Options
@@ -32,6 +24,9 @@
 import platform
 import os
 import sys
+import json
+import urllib.request
+import urllib.parse
 
 data_dir = []
 system = platform.system()
@@ -51,14 +46,8 @@ block_nums_needed = []
 block_hashes_needed = []
 block_times_needed = []
 
-import urllib.request
-import urllib.parse
-
-def fetch_coinbase_spot_ltc_usd(date_yyyy_mm_dd: str | None = None) -> float:
-    """
-    Returns LTC-USD spot price as float using Coinbase public API.
-    If date_yyyy_mm_dd is provided (YYYY-MM-DD, UTC), returns historic spot for that date.
-    """
+def fetch_coinbase_spot_ltc_usd(date_yyyy_mm_dd=None):
+    """Fetch LTC-USD spot from Coinbase (public API)."""
     base_url = "https://api.coinbase.com/v2/prices/LTC-USD/spot"
     if date_yyyy_mm_dd:
         qs = urllib.parse.urlencode({"date": date_yyyy_mm_dd})
@@ -69,8 +58,6 @@ def fetch_coinbase_spot_ltc_usd(date_yyyy_mm_dd: str | None = None) -> float:
     req = urllib.request.Request(
         url,
         headers={
-            # Coinbase examples often include CB-VERSION; generally not required,
-            # but harmless and can reduce surprises.
             "CB-VERSION": "2015-04-08",
             "User-Agent": "UTXOracle-Litecoin/1.0"
         }
@@ -80,52 +67,41 @@ def fetch_coinbase_spot_ltc_usd(date_yyyy_mm_dd: str | None = None) -> float:
     j = json.loads(raw)
     return float(j["data"]["amount"])
 
-
-
-
-
-
-
 def print_help():
-    help_text = """
-Usage: python3 UTXOracle_Litecoin.py [options]
-
-Options:
-  -h               Show this help message
+    print("""Usage: python3 UTXOracle_Litecoin.py [options]
+  -h               Show help
   -d YYYY/MM/DD    Specify a UTC date to evaluate
-  -p /path/to/dir  Specify the Litecoin data directory (where litecoin.conf lives)
-  -rb              Use last 144 recent blocks instead of date mode
-"""
-    print(help_text)
+  -p /path/to/dir  Litecoin data directory
+  -rb              Use last 144 blocks instead of date mode
+""")
     sys.exit(0)
 
 if "-h" in sys.argv:
     print_help()
 
 if "-d" in sys.argv:
-    h_index = sys.argv.index("-d")
-    if h_index + 1 < len(sys.argv):
-        date_entered = sys.argv[h_index + 1]
+    i = sys.argv.index("-d")
+    if i + 1 < len(sys.argv):
+        date_entered = sys.argv[i + 1]
 
 if "-p" in sys.argv:
-    d_index = sys.argv.index("-p")
-    if d_index + 1 < len(sys.argv):
-        data_dir = sys.argv[d_index + 1]
+    i = sys.argv.index("-p")
+    if i + 1 < len(sys.argv):
+        data_dir = sys.argv[i + 1]
 
 if "-rb" in sys.argv:
     date_mode = False
     block_mode = True
 
 conf_path = None
-conf_candidates = ["litecoin.conf", "litecoin_rw.conf", "litecoin-rw.conf"]
-for fname in conf_candidates:
-    path = os.path.join(data_dir, fname)
-    if os.path.exists(path):
-        conf_path = path
+for fname in ["litecoin.conf", "litecoin_rw.conf", "litecoin-rw.conf"]:
+    p = os.path.join(data_dir, fname)
+    if os.path.exists(p):
+        conf_path = p
         break
+
 if not conf_path:
-    print(f"Invalid Litecoin data directory: {data_dir}")
-    print("Expected to find 'litecoin.conf' (or litecoin_rw.conf) in this directory.")
+    print("litecoin.conf not found in", data_dir)
     sys.exit(1)
 
 conf_settings = {}
@@ -135,10 +111,8 @@ with open(conf_path, "r", encoding="utf-8", errors="replace") as f:
         if not line or line.startswith("#"):
             continue
         if "=" in line:
-            key, value = line.split("=", 1)
-            conf_settings[key.strip()] = value.strip().strip('"')
-
-blocks_dir = os.path.expanduser(conf_settings.get("blocksdir", os.path.join(data_dir, "blocks")))
+            k, v = line.split("=", 1)
+            conf_settings[k.strip()] = v.strip().strip('"')
 
 rpc_user = conf_settings.get("rpcuser")
 rpc_password = conf_settings.get("rpcpassword")
@@ -150,76 +124,36 @@ rpc_port = int(conf_settings.get("rpcport", "9332"))
 # Step 2 - Establish RPC Connection
 ###############################################################################
 
-print("\nCurrent operation  \t\t\t\tTotal Completion", flush=True)
-print("\nConnecting to node...", flush=True)
-print("0%..", end="", flush=True)
-
 import http.client
-import json
 import base64
 
 def Ask_Node(command, cred_creation):
     method = command[0]
     params = command[1:]
 
-    rpc_u = rpc_user
-    rpc_p = rpc_password
+    u, p = rpc_user, rpc_password
+    if not u or not p:
+        with open(cookie_path, "r") as f:
+            u, p = f.read().strip().split(":", 1)
 
-    if not rpc_u or not rpc_p:
-        try:
-            with open(cookie_path, "r") as f:
-                cookie = f.read().strip()
-                rpc_u, rpc_p = cookie.split(":", 1)
-        except Exception as e:
-            print("Error reading .cookie file for RPC authentication.")
-            print("Details:", e)
-            sys.exit(1)
+    payload = json.dumps({"jsonrpc": "1.0", "id": "utxoracle", "method": method, "params": params})
+    auth = base64.b64encode(f"{u}:{p}".encode()).decode()
+    headers = {"Content-Type": "application/json", "Authorization": f"Basic {auth}"}
 
-    payload = json.dumps({"jsonrpc":"1.0","id":"utxoracle","method":method,"params":params})
-    auth_header = base64.b64encode(f"{rpc_u}:{rpc_p}".encode()).decode()
-    headers = {"Content-Type":"application/json","Authorization":f"Basic {auth_header}"}
+    conn = http.client.HTTPConnection(rpc_host, rpc_port)
+    conn.request("POST", "/", payload, headers)
+    resp = conn.getresponse()
+    raw = resp.read()
+    conn.close()
 
-    try:
-        conn = http.client.HTTPConnection(rpc_host, rpc_port)
-        conn.request("POST", "/", payload, headers)
-        response = conn.getresponse()
-        if response.status != 200:
-            raise Exception(f"HTTP error {response.status} {response.reason}")
-        raw_data = response.read()
-        conn.close()
+    j = json.loads(raw)
+    if j.get("error"):
+        raise Exception(j["error"])
+    return j["result"]
 
-        parsed = json.loads(raw_data)
-        if parsed.get("error"):
-            raise Exception(parsed["error"])
-
-        result = parsed["result"]
-        if isinstance(result, (dict, list)):
-            return json.dumps(result, indent=2).encode()
-        return str(result).encode()
-
-    except Exception as e:
-        if not cred_creation:
-            print("Error connecting to your node via RPC. Troubleshooting steps:\n")
-            print("\t1) Ensure litecoind or litecoin-qt is running with server=1.")
-            print("\t2) Check rpcuser/rpcpassword or .cookie.")
-            print("\t3) Verify RPC port/host settings.")
-            print("\nThe attempted RPC method was:", method)
-            print("Parameters:", params)
-            print("\nThe error was:\n", e)
-            sys.exit(1)
-
-print("20%..", end="", flush=True)
-Ask_Node(["getblockcount"], True)
-block_count_b = Ask_Node(["getblockcount"], False)
-print("40%..", end="", flush=True)
-block_count = int(block_count_b)
-block_count_consensus = block_count - 6
-
-block_hash = Ask_Node(["getblockhash", block_count_consensus], False).decode().strip()
-print("60%..", end="", flush=True)
-block_header_b = Ask_Node(["getblockheader", block_hash, True], False)
-block_header = json.loads(block_header_b)
-print("80%..", end="", flush=True)
+block_count = Ask_Node(["getblockcount"], True)
+block_hash = Ask_Node(["getblockhash", block_count - 6], False)
+block_header = Ask_Node(["getblockheader", block_hash, True], False)
 
 ###############################################################################
 # Step 3 - Check Dates
@@ -228,46 +162,16 @@ print("80%..", end="", flush=True)
 from datetime import datetime, timezone, timedelta
 
 latest_time_in_seconds = block_header["time"]
-time_datetime = datetime.fromtimestamp(latest_time_in_seconds, tz=timezone.utc)
-
-latest_year  = int(time_datetime.strftime("%Y"))
-latest_month = int(time_datetime.strftime("%m"))
-latest_day   = int(time_datetime.strftime("%d"))
-latest_utc_midnight = datetime(latest_year, latest_month, latest_day, 0, 0, 0, tzinfo=timezone.utc)
-
-seconds_in_a_day = 86400
-yesterday_seconds = latest_time_in_seconds - seconds_in_a_day
-latest_price_day = datetime.fromtimestamp(yesterday_seconds, tz=timezone.utc)
-latest_price_date = latest_price_day.strftime("%Y-%m-%d")
-print("100%", end="", flush=True)
-print("\t\t\t5% done", flush=True)
+latest_dt = datetime.fromtimestamp(latest_time_in_seconds, tz=timezone.utc)
+latest_midnight = datetime(latest_dt.year, latest_dt.month, latest_dt.day, tzinfo=timezone.utc)
 
 if date_mode:
-    if date_entered == "":
-        datetime_entered = latest_utc_midnight + timedelta(days=-1)
+    if date_entered:
+        y, m, d = map(int, date_entered.split("/"))
+        datetime_entered = datetime(y, m, d, tzinfo=timezone.utc)
     else:
-        try:
-            year = int(date_entered.split("/")[0])
-            month = int(date_entered.split("/")[1])
-            day = int(date_entered.split("/")[2])
+        datetime_entered = latest_midnight - timedelta(days=1)
 
-            datetime_entered = datetime(year, month, day, 0, 0, 0, tzinfo=timezone.utc)
-            if datetime_entered.timestamp() >= latest_utc_midnight.timestamp():
-                print("\nDate is after the latest available. We need 6 blocks after UTC midnight.")
-                print("Run UTXOracle_Litecoin.py -rb for the most recent blocks")
-                sys.exit()
-
-            dec_15_2023 = datetime(2023, 12, 15, 0, 0, 0, tzinfo=timezone.utc)
-            if datetime_entered.timestamp() < dec_15_2023.timestamp():
-                print("\nThe date entered is before 2023-12-15, please try again")
-                sys.exit()
-
-        except:
-            print("\nError interpreting date. Please try again. Make sure format is YYYY/MM/DD")
-            sys.exit()
-
-    price_day_seconds = int(datetime_entered.timestamp())
-    price_day_date_utc = datetime_entered.strftime("%b %d, %Y")
     price_date_dash = datetime_entered.strftime("%Y-%m-%d")
 
 ##############################################################################
